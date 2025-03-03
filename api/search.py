@@ -72,7 +72,18 @@ def search():
         cur.execute(sql, query_params)
         rows = cur.fetchall()
         columns = [desc[0] for desc in cur.description]
-        results = [dict(zip(columns, row)) for row in rows]
+        results = []
+        for row in rows:
+            record = dict(zip(columns, row))
+            # Adjust the price: if the price is stored in cents, convert to dollars.
+            # For example, if the DB value is "112000", divide by 100 to get "1120.00".
+            price_val = record.get("price")
+            if price_val is not None:
+                try:
+                    record["price"] = "{:.2f}".format(float(price_val) / 100)
+                except Exception:
+                    pass
+            results.append(record)
 
         # Count total matches for pagination
         count_sql = f"""
