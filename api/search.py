@@ -4,7 +4,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 
 app = Flask(__name__)
-app.config["DEBUG"] = True  # Enable debug mode temporarily
+app.config["DEBUG"] = True  # enable for debugging
 CORS(app)
 
 DB_URI = os.environ.get("DB_URI")
@@ -28,6 +28,7 @@ def search():
     if not search_term:
         return jsonify({"error": "Missing 'q' query parameter."}), 400
 
+    # Split the search query into tokens. Example: "iph cas" -> ["iph", "cas"]
     tokens = search_term.split()
     offset = page * limit
 
@@ -35,11 +36,16 @@ def search():
         conn = psycopg2.connect(DB_URI)
         cur = conn.cursor()
 
+        # For each token, we build two sets of parameters:
+        #   - One for the WHERE condition using the pg_trgm similarity operator.
+        #   - One for the similarity expression (for ordering).
         conditions = []
         similarity_exprs = []
         values = []
         for token in tokens:
-            conditions.append("(title % %s OR product_type % %s OR tags % %s OR sku % %s)")
+            # Note: the similarity operator (%) must be escaped as %% so that psycopg2
+            # treats it as a literal %.
+            conditions.append("(title %% %s OR product_type %% %s OR tags %% %s OR sku %% %s)")
             similarity_exprs.append("""
                 greatest(
                     similarity(title, %s),
@@ -48,12 +54,14 @@ def search():
                     similarity(sku, %s)
                 )
             """)
-            # For WHERE clause: 4 parameters per token.
+            # Bind 4 parameters for the condition...
             values.extend([token, token, token, token])
-            # For similarity expression: 4 parameters per token.
+            # ...and 4 parameters for the similarity expression.
             values.extend([token, token, token, token])
 
+        # All tokens must match in some column.
         where_clause = " AND ".join(conditions)
+        # Sum the best similarity score per token.
         combined_similarity_expr = " + ".join(similarity_exprs)
 
         sql = f"""
@@ -80,6 +88,7 @@ def search():
         columns = [desc[0] for desc in cur.description]
         results = [dict(zip(columns, row)) for row in rows]
 
+        # Count total matches for pagination.
         count_sql = f"""
             SELECT COUNT(*)
             FROM products
@@ -88,6 +97,7 @@ def search():
         cur.execute(count_sql, values)
         total_matches = cur.fetchone()[0]
 
+        # If no matches, build "did you mean" suggestions.
         did_you_mean = []
         if total_matches == 0:
             for token in tokens:
@@ -117,7 +127,6 @@ def search():
         }), 200
 
     except Exception as e:
-        # Log the error to the console for debugging.
         app.logger.error("Error in search endpoint: %s", e)
         return jsonify({"error": str(e)}), 500
 
