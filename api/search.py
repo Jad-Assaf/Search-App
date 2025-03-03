@@ -3,13 +3,13 @@ import json
 import psycopg2
 from urllib.parse import urlparse, parse_qs
 
-# Load the database URI from environment variables
+# Load DB URI from environment variables (set in Vercel dashboard)
 DB_URI = os.environ.get("DB_URI")
 
 def handler(event, context):
     """
     AWS Lambda-style handler function.
-    Expects query parameters under event["queryStringParameters"].
+    Vercel passes query parameters in event["queryStringParameters"].
     """
     query_params = event.get("queryStringParameters") or {}
     search_term = query_params.get("q", "").strip()
@@ -21,15 +21,12 @@ def handler(event, context):
             "headers": {"Content-Type": "application/json"}
         }
     
-    # Create a pattern for partial matching using ILIKE (case-insensitive)
     pattern = f"%{search_term}%"
     
     try:
-        # Connect to the PostgreSQL database
         conn = psycopg2.connect(DB_URI)
         cur = conn.cursor()
         
-        # Execute the search query on the products table
         sql = """
             SELECT product_id, title, handle, url, description, product_type, tags, sku
             FROM products
@@ -42,7 +39,6 @@ def handler(event, context):
         """
         cur.execute(sql, (pattern, pattern, pattern, pattern))
         rows = cur.fetchall()
-        # Get column names from the cursor description
         columns = [desc[0] for desc in cur.description]
         results = [dict(zip(columns, row)) for row in rows]
         

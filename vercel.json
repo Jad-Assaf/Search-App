@@ -1,14 +1,14 @@
 {
     "version": 2,
     "functions": {
-        "api/search.py": {
+        "api/index.py": {
             "runtime": "@vercel/python@4.7.1"
         }
     },
     "routes": [
         {
             "src": "/search(.*)",
-            "dest": "/api/search.py"
+            "dest": "/api/index.py"
         }
     ]
 }
