@@ -3,8 +3,8 @@ import json
 import psycopg2
 from urllib.parse import urlparse, parse_qs
 
-# In production, store DB_URI in an environment variable.
-DB_URI = os.environ.get("DB_URI")  
+# Load DB URI from environment variables
+DB_URI = os.environ.get("DB_URI")
 
 def handler(request):
     # Parse query parameters from the request URL
@@ -19,7 +19,7 @@ def handler(request):
             "headers": {"Content-Type": "application/json"}
         }
     
-    # Create a pattern for partial matching
+    # Create a pattern for partial matching (using ILIKE for case-insensitive match)
     pattern = f"%{search_term}%"
     
     try:
@@ -59,4 +59,3 @@ def handler(request):
         "body": json.dumps({"results": results}),
         "headers": {"Content-Type": "application/json"}
     }
-
