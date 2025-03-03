@@ -1,25 +1,21 @@
+from flask import Flask, request, jsonify
 import os
-import json
 import psycopg2
-from urllib.parse import urlparse, parse_qs
+from psycopg2.extras import execute_values
+
+app = Flask(__name__)
 
 # Load DB URI from environment variables
-DB_URI = os.environ.get("DB_URI")
+DB_URI = os.environ.get("DB_URI")  # e.g., "postgres://avnadmin:...@host:port/defaultdb?sslmode=require"
 
-def handler(request):
-    # Parse query parameters from the request URL
-    parsed_url = urlparse(request.url)
-    query_params = parse_qs(parsed_url.query)
-    search_term = query_params.get("q", [""])[0].strip()
-    
+@app.route("/api/search", methods=["GET"])
+def search():
+    # Get the search term from the query parameters
+    search_term = request.args.get("q", "").strip()
     if not search_term:
-        return {
-            "statusCode": 400,
-            "body": json.dumps({"error": "Missing 'q' query parameter."}),
-            "headers": {"Content-Type": "application/json"}
-        }
+        return jsonify({"error": "Missing 'q' query parameter."}), 400
     
-    # Create a pattern for partial matching (using ILIKE for case-insensitive match)
+    # Create a pattern for partial matching using ILIKE (case-insensitive)
     pattern = f"%{search_term}%"
     
     try:
@@ -40,22 +36,17 @@ def handler(request):
         """
         cur.execute(sql, (pattern, pattern, pattern, pattern))
         rows = cur.fetchall()
-        # Get column names from the cursor description
+        # Build a list of dictionaries from the query result
         columns = [desc[0] for desc in cur.description]
         results = [dict(zip(columns, row)) for row in rows]
         
         cur.close()
         conn.close()
     except Exception as e:
-        return {
-            "statusCode": 500,
-            "body": json.dumps({"error": str(e)}),
-            "headers": {"Content-Type": "application/json"}
-        }
+        return jsonify({"error": str(e)}), 500
     
     # Return search results as JSON
-    return {
-        "statusCode": 200,
-        "body": json.dumps({"results": results}),
-        "headers": {"Content-Type": "application/json"}
-    }
+    return jsonify({"results": results}), 200
+
+# Export the Flask app as the WSGI handler for Vercel
+handler = app
