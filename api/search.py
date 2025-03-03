@@ -1,21 +1,28 @@
-from flask import Flask, request, jsonify
 import os
+import json
 import psycopg2
-from psycopg2.extras import execute_values
-
-app = Flask(__name__)
+from urllib.parse import urlparse, parse_qs
 
 # Load DB URI from environment variables
-DB_URI = os.environ.get("DB_URI")  # e.g., "postgres://avnadmin:...@host:port/defaultdb?sslmode=require"
+DB_URI = os.environ.get("DB_URI")  # e.g., set in Vercel dashboard
 
-@app.route("/api/search", methods=["GET"])
-def search():
-    # Get the search term from the query parameters
-    search_term = request.args.get("q", "").strip()
-    if not search_term:
-        return jsonify({"error": "Missing 'q' query parameter."}), 400
+def handler(event, context):
+    """
+    AWS Lambda-style handler function for Vercel.
+    Expects query parameters to be in event["queryStringParameters"].
+    """
+    # Get query parameters from the event
+    query_params = event.get("queryStringParameters") or {}
+    search_term = query_params.get("q", "").strip()
     
-    # Create a pattern for partial matching using ILIKE (case-insensitive)
+    if not search_term:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "Missing 'q' query parameter."}),
+            "headers": {"Content-Type": "application/json"}
+        }
+    
+    # Create a pattern for partial matching (ILIKE is case-insensitive)
     pattern = f"%{search_term}%"
     
     try:
@@ -36,17 +43,22 @@ def search():
         """
         cur.execute(sql, (pattern, pattern, pattern, pattern))
         rows = cur.fetchall()
-        # Build a list of dictionaries from the query result
+        # Get column names from the cursor description
         columns = [desc[0] for desc in cur.description]
         results = [dict(zip(columns, row)) for row in rows]
         
         cur.close()
         conn.close()
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": str(e)}),
+            "headers": {"Content-Type": "application/json"}
+        }
     
     # Return search results as JSON
-    return jsonify({"results": results}), 200
-
-# Export the Flask app as the WSGI handler for Vercel
-handler = app
+    return {
+        "statusCode": 200,
+        "body": json.dumps({"results": results}),
+        "headers": {"Content-Type": "application/json"}
+    }
