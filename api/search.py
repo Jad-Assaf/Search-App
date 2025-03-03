@@ -1,8 +1,10 @@
 import os
 import psycopg2
 from flask import Flask, request, jsonify
+from flask_cors import CORS  # <-- Import Flask-Cors
 
 app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": "https://macarabia.me"}})
 
 DB_URI = os.environ.get("DB_URI")
 
