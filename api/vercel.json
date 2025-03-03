@@ -1,0 +1,7 @@
+{
+    "functions": {
+        "api/search.py": {
+            "runtime": "vercel-python@0.3.1"
+        }
+    }
+}
