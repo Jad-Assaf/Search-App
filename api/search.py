@@ -6,7 +6,7 @@ app = Flask(__name__)
 
 DB_URI = os.environ.get("DB_URI")
 
-@app.route("/", methods=["GET"])
+@app.route("/api/search", methods=["GET"])
 def search():
     search_term = request.args.get("q", "").strip()
     
