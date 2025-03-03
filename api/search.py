@@ -10,11 +10,11 @@ DB_URI = os.environ.get("DB_URI")
 
 @app.route("/api/search", methods=["GET"])
 def search():
+    # Basic params
     search_term = request.args.get("q", "").strip()
     page_str = request.args.get("page", "0")
     limit_str = request.args.get("limit", "20")
 
-    # Convert page/limit to integers (with defaults)
     try:
         page = int(page_str)
         limit = int(limit_str)
@@ -28,41 +28,62 @@ def search():
     if not search_term:
         return jsonify({"error": "Missing 'q' query parameter."}), 400
 
-    pattern = f"%{search_term}%"
+    # Split into tokens: e.g. "iph cas" -> ["iph", "cas"]
+    tokens = search_term.split()
+
+    # We want each token to match somewhere, so we'll build something like:
+    # (title ILIKE '%iph%' OR product_type ILIKE '%iph%' OR ...) 
+    # AND
+    # (title ILIKE '%cas%' OR product_type ILIKE '%cas%' OR ...)
+    # using dynamic SQL
+    conditions = []
+    values = []
+    for token in tokens:
+        wildcard = f"%{token}%"
+        # One group of OR conditions for each token
+        conditions.append("""
+            (title ILIKE %s
+             OR product_type ILIKE %s
+             OR tags ILIKE %s
+             OR sku ILIKE %s)
+        """)
+        values.extend([wildcard, wildcard, wildcard, wildcard])
+
+    # Join each group with AND so each token must appear
+    where_clause = " AND ".join(conditions)
+
     offset = page * limit
 
     try:
         conn = psycopg2.connect(DB_URI)
         cur = conn.cursor()
 
-        # 1) Main query with pagination + push Accessories to the bottom
-        sql = """
+        # Query with the new WHERE built from tokens
+        # Also, push Accessories to bottom, then sort by title
+        sql = f"""
             SELECT product_id, title, handle, url, product_type, tags, sku
             FROM products
-            WHERE title ILIKE %s
-               OR product_type ILIKE %s
-               OR tags ILIKE %s
-               OR sku ILIKE %s
+            WHERE {where_clause}
             ORDER BY
                 CASE WHEN product_type = 'Accessories' THEN 1 ELSE 0 END,
                 title
             LIMIT %s OFFSET %s;
         """
-        cur.execute(sql, (pattern, pattern, pattern, pattern, limit, offset))
+        # Add limit + offset to the parameter list
+        query_params = values + [limit, offset]
+
+        cur.execute(sql, query_params)
         rows = cur.fetchall()
         columns = [desc[0] for desc in cur.description]
         results = [dict(zip(columns, row)) for row in rows]
 
-        # 2) Count total matches (for showing total pages, etc.)
-        count_sql = """
+        # Count total matches (for pagination info)
+        count_sql = f"""
             SELECT COUNT(*)
             FROM products
-            WHERE title ILIKE %s
-               OR product_type ILIKE %s
-               OR tags ILIKE %s
-               OR sku ILIKE %s
+            WHERE {where_clause}
         """
-        cur.execute(count_sql, (pattern, pattern, pattern, pattern))
+        cur.execute(count_sql, values)
         total_matches = cur.fetchone()[0]
 
         cur.close()
