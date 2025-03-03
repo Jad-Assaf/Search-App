@@ -7,7 +7,7 @@
     },
     "routes": [
         {
-            "src": "/search(.*)",
+            "src": "/(.*)",
             "dest": "/api/index.py"
         }
     ]
