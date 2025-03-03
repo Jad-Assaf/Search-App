@@ -3,15 +3,14 @@ import json
 import psycopg2
 from urllib.parse import urlparse, parse_qs
 
-# Load DB URI from environment variables
-DB_URI = os.environ.get("DB_URI")  # e.g., set in Vercel dashboard
+# Load the database URI from environment variables
+DB_URI = os.environ.get("DB_URI")
 
 def handler(event, context):
     """
-    AWS Lambda-style handler function for Vercel.
-    Expects query parameters to be in event["queryStringParameters"].
+    AWS Lambda-style handler function.
+    Expects query parameters under event["queryStringParameters"].
     """
-    # Get query parameters from the event
     query_params = event.get("queryStringParameters") or {}
     search_term = query_params.get("q", "").strip()
     
@@ -22,7 +21,7 @@ def handler(event, context):
             "headers": {"Content-Type": "application/json"}
         }
     
-    # Create a pattern for partial matching (ILIKE is case-insensitive)
+    # Create a pattern for partial matching using ILIKE (case-insensitive)
     pattern = f"%{search_term}%"
     
     try:
@@ -56,7 +55,6 @@ def handler(event, context):
             "headers": {"Content-Type": "application/json"}
         }
     
-    # Return search results as JSON
     return {
         "statusCode": 200,
         "body": json.dumps({"results": results}),
