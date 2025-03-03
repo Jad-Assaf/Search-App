@@ -1,0 +1,15 @@
+{
+    "version": 2,
+    "functions": {
+        "api/search.py": {
+            "runtime": "@vercel/python@4.7.1",
+            "handler": "search.app"
+        }
+    },
+    "routes": [
+        {
+            "src": "/search(.*)",
+            "dest": "/api/search.py"
+        }
+    ]
+}
