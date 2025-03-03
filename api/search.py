@@ -31,7 +31,10 @@ def search():
     offset = page * limit
 
     try:
-        # Split the search term into tokens and build the WHERE clause using ILIKE.
+        # Prepare the full wildcard search term for full_match computation.
+        full_wildcard = f"%{search_term}%"
+        
+        # Tokenize search_term and build conditions with ILIKE wildcards.
         tokens = search_term.split()
         conditions = []
         values = []
@@ -41,12 +44,16 @@ def search():
                 (title ILIKE %s OR product_type ILIKE %s OR tags ILIKE %s OR sku ILIKE %s)
             """)
             values.extend([wildcard, wildcard, wildcard, wildcard])
-        # Join the conditions so that every token must match somewhere.
+        # Combine token conditions so every token must match somewhere.
         where_clause = " AND ".join(conditions)
 
         conn = psycopg2.connect(DB_URI)
         cur = conn.cursor()
 
+        # Main query:
+        # 1. Compute "full_match": 1 if title ILIKE the full search term, else 0.
+        # 2. Apply the token-based conditions.
+        # 3. Order by full_match DESC, then push Accessories to the bottom, then by title.
         sql = f"""
             SELECT
                 product_id,
@@ -57,20 +64,25 @@ def search():
                 tags,
                 sku,
                 price,
-                image_url
+                image_url,
+                CASE WHEN title ILIKE %s THEN 1 ELSE 0 END AS full_match
             FROM products
             WHERE {where_clause}
             ORDER BY
+                full_match DESC,
                 CASE WHEN product_type = 'Accessories' THEN 1 ELSE 0 END,
                 title
             LIMIT %s OFFSET %s;
         """
-        query_params = values + [limit, offset]
+        # Build parameters:
+        # First parameter for full_match, then token conditions, then limit and offset.
+        query_params = [full_wildcard] + values + [limit, offset]
         cur.execute(sql, query_params)
         rows = cur.fetchall()
         columns = [desc[0] for desc in cur.description]
         results = [dict(zip(columns, row)) for row in rows]
 
+        # Count total matches for pagination (using the token conditions only).
         count_sql = f"""
             SELECT COUNT(*)
             FROM products
