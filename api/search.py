@@ -33,7 +33,6 @@ def search():
     try:
         # Build a ts_query for full-text search.
         # By appending :* to each token, we allow prefix matching.
-        # For example, "iphno" becomes "iphno:*" and "iphone case" becomes "iphno:* & case:*"
         ts_query = " & ".join(token + ":*" for token in search_term.split())
 
         # Combine columns to search. Using coalesce to avoid nulls.
@@ -45,7 +44,7 @@ def search():
         conn = psycopg2.connect(DB_URI)
         cur = conn.cursor()
 
-        # Main query: search using to_tsquery with prefix matching.
+        # Main query: include price and image_url in the SELECT list.
         sql = f"""
             SELECT
                 product_id,
@@ -55,6 +54,8 @@ def search():
                 product_type,
                 tags,
                 sku,
+                price,
+                image_url,
                 ts_rank(
                     to_tsvector('english', {text_expr}),
                     to_tsquery('english', %s)
