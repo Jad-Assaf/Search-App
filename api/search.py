@@ -36,32 +36,21 @@ def search():
         conn = psycopg2.connect(DB_URI)
         cur = conn.cursor()
 
-        # For each token, we build two sets of parameters:
-        #   - One for the WHERE condition using the pg_trgm similarity operator.
-        #   - One for the similarity expression (for ordering).
         conditions = []
         similarity_exprs = []
         values = []
+
+        # For each token, build the condition and similarity expression as a single line.
         for token in tokens:
-            # Note: the similarity operator (%) must be escaped as %% so that psycopg2
-            # treats it as a literal %.
+            # Note: The trigram operator (%) is escaped as %%.
             conditions.append("(title %% %s OR product_type %% %s OR tags %% %s OR sku %% %s)")
-            similarity_exprs.append("""
-                greatest(
-                    similarity(title, %s),
-                    similarity(product_type, %s),
-                    similarity(tags, %s),
-                    similarity(sku, %s)
-                )
-            """)
-            # Bind 4 parameters for the condition...
+            similarity_exprs.append("greatest(similarity(title, %s), similarity(product_type, %s), similarity(tags, %s), similarity(sku, %s))")
+            # For each token, add 4 parameters for condition...
             values.extend([token, token, token, token])
-            # ...and 4 parameters for the similarity expression.
+            # ...and 4 parameters for similarity expression.
             values.extend([token, token, token, token])
 
-        # All tokens must match in some column.
         where_clause = " AND ".join(conditions)
-        # Sum the best similarity score per token.
         combined_similarity_expr = " + ".join(similarity_exprs)
 
         sql = f"""
@@ -88,7 +77,6 @@ def search():
         columns = [desc[0] for desc in cur.description]
         results = [dict(zip(columns, row)) for row in rows]
 
-        # Count total matches for pagination.
         count_sql = f"""
             SELECT COUNT(*)
             FROM products
@@ -97,7 +85,6 @@ def search():
         cur.execute(count_sql, values)
         total_matches = cur.fetchone()[0]
 
-        # If no matches, build "did you mean" suggestions.
         did_you_mean = []
         if total_matches == 0:
             for token in tokens:
