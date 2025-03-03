@@ -14,7 +14,7 @@ def search():
     search_term = request.args.get("q", "").strip()
     page_str = request.args.get("page", "0")
     limit_str = request.args.get("limit", "20")
-
+    
     try:
         page = int(page_str)
         limit = int(limit_str)
@@ -35,24 +35,35 @@ def search():
         full_wildcard = f"%{search_term}%"
         
         # Tokenize search_term and build conditions with ILIKE wildcards.
+        # For each token, we check the original title and a normalized version using regexp_replace.
         tokens = search_term.split()
         conditions = []
         values = []
         for token in tokens:
             wildcard = f"%{token}%"
+            # For each token, check:
+            #   - original title ILIKE wildcard
+            #   - normalized title (inserting a space between letters and digits) ILIKE wildcard
+            #   - product_type, tags, and sku ILIKE wildcard
             conditions.append("""
-                (title ILIKE %s OR product_type ILIKE %s OR tags ILIKE %s OR sku ILIKE %s)
+                (title ILIKE %s OR 
+                 regexp_replace(title, '([A-Za-z])([0-9])', '\\1 \\2', 'g') ILIKE %s OR
+                 product_type ILIKE %s OR 
+                 tags ILIKE %s OR 
+                 sku ILIKE %s)
             """)
-            values.extend([wildcard, wildcard, wildcard, wildcard])
-        # Combine token conditions so every token must match somewhere.
+            # Add 5 parameters per token.
+            values.extend([wildcard, wildcard, wildcard, wildcard, wildcard])
+        
+        # Combine token conditions so that every token must match in some field.
         where_clause = " AND ".join(conditions)
-
+        
         conn = psycopg2.connect(DB_URI)
         cur = conn.cursor()
 
         # Main query:
         # 1. Compute "full_match": 1 if title ILIKE the full search term, else 0.
-        # 2. Apply the token-based conditions.
+        # 2. Apply token-based conditions (which now include normalized title check).
         # 3. Order by full_match DESC, then push Accessories to the bottom, then by title.
         sql = f"""
             SELECT
@@ -74,15 +85,14 @@ def search():
                 title
             LIMIT %s OFFSET %s;
         """
-        # Build parameters:
-        # First parameter for full_match, then token conditions, then limit and offset.
+        # Build parameters: first parameter for full_match, then all token conditions, then limit and offset.
         query_params = [full_wildcard] + values + [limit, offset]
         cur.execute(sql, query_params)
         rows = cur.fetchall()
         columns = [desc[0] for desc in cur.description]
         results = [dict(zip(columns, row)) for row in rows]
 
-        # Count total matches for pagination (using the token conditions only).
+        # Count total matches (using token conditions only)
         count_sql = f"""
             SELECT COUNT(*)
             FROM products
