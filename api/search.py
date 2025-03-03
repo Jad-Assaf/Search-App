@@ -4,7 +4,7 @@ import psycopg2
 from urllib.parse import urlparse, parse_qs
 
 # In production, store DB_URI in an environment variable.
-DB_URI = "postgres://avnadmin:AVNS_egXwurAJu6RNce2-fn3@pg-10acb131-jad-a642.d.aivencloud.com:19101/defaultdb?sslmode=require"
+DB_URI = os.environ.get("DB_URI")  
 
 def handler(request):
     # Parse query parameters from the request URL
