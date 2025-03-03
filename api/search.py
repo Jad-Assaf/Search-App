@@ -31,11 +31,22 @@ def search():
     offset = page * limit
 
     try:
+        # Split the search term into tokens and build the WHERE clause using ILIKE.
+        tokens = search_term.split()
+        conditions = []
+        values = []
+        for token in tokens:
+            wildcard = f"%{token}%"
+            conditions.append("""
+                (title ILIKE %s OR product_type ILIKE %s OR tags ILIKE %s OR sku ILIKE %s)
+            """)
+            values.extend([wildcard, wildcard, wildcard, wildcard])
+        # Join the conditions so that every token must match somewhere.
+        where_clause = " AND ".join(conditions)
+
         conn = psycopg2.connect(DB_URI)
         cur = conn.cursor()
 
-        # Use the pg_trgm operator "%" for fuzzy substring matching.
-        # Note: In a Python f-string, we need to escape "%" as "%%".
         sql = f"""
             SELECT
                 product_id,
@@ -46,37 +57,26 @@ def search():
                 tags,
                 sku,
                 price,
-                image_url,
-                GREATEST(
-                    similarity(title, %s),
-                    similarity(product_type, %s),
-                    similarity(tags, %s),
-                    similarity(sku, %s)
-                ) AS sim_score
+                image_url
             FROM products
-            WHERE (title %% %s OR product_type %% %s OR tags %% %s OR sku %% %s)
+            WHERE {where_clause}
             ORDER BY
                 CASE WHEN product_type = 'Accessories' THEN 1 ELSE 0 END,
-                sim_score DESC,
                 title
             LIMIT %s OFFSET %s;
         """
-        # We pass the search_term four times for the similarity() calls and four times for the WHERE clause.
-        params = [search_term, search_term, search_term, search_term] + \
-                 [search_term, search_term, search_term, search_term] + \
-                 [limit, offset]
-        cur.execute(sql, params)
+        query_params = values + [limit, offset]
+        cur.execute(sql, query_params)
         rows = cur.fetchall()
         columns = [desc[0] for desc in cur.description]
         results = [dict(zip(columns, row)) for row in rows]
 
-        # Count total matches for pagination
         count_sql = f"""
             SELECT COUNT(*)
             FROM products
-            WHERE (title %% %s OR product_type %% %s OR tags %% %s OR sku %% %s);
+            WHERE {where_clause}
         """
-        cur.execute(count_sql, [search_term]*4)
+        cur.execute(count_sql, values)
         total_matches = cur.fetchone()[0]
 
         cur.close()
