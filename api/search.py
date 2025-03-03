@@ -27,7 +27,7 @@ def search():
     if not search_term:
         return jsonify({"error": "Missing 'q' query parameter."}), 400
 
-    # Split the user query into tokens, e.g. "iph cas" => ["iph", "cas"]
+    # Split the search query into tokens. Example: "iph cas" -> ["iph", "cas"]
     tokens = search_term.split()
     offset = page * limit
 
@@ -35,15 +35,18 @@ def search():
         conn = psycopg2.connect(DB_URI)
         cur = conn.cursor()
 
-        # Build the fuzzy search WHERE clause:
-        # For each token, require that at least one of the columns is "similar" to it.
+        # For each token, we want to check that at least one column is "similar"
+        # using the pg_trgm similarity operator (%) and also compute the best similarity
+        # for ordering. We need to add 8 parameters per token:
+        #   - 4 for the WHERE condition (one per column)
+        #   - 4 for the similarity expression (one per column)
         conditions = []
         similarity_exprs = []
         values = []
-
         for token in tokens:
+            # Condition: token must be similar in at least one column
             conditions.append("(title % %s OR product_type % %s OR tags % %s OR sku % %s)")
-            # For ordering, take the greatest similarity across columns for this token.
+            # Similarity expression: take the greatest similarity among columns
             similarity_exprs.append("""
                 greatest(
                     similarity(title, %s),
@@ -52,16 +55,18 @@ def search():
                     similarity(sku, %s)
                 )
             """)
-            # For each token, add it 4 times for the condition...
+            # Bind 4 parameters for condition...
+            values.extend([token, token, token, token])
+            # ...and 4 parameters for similarity expression.
             values.extend([token, token, token, token])
 
-        # All tokens must match in some column:
+        # All tokens must match in some column
         where_clause = " AND ".join(conditions)
-        # Sum the best similarity score per token:
+        # Sum the best similarity score per token (if multiple tokens, scores add up)
         combined_similarity_expr = " + ".join(similarity_exprs)
 
         # Query for matching products with pagination.
-        # Push products with product_type 'Accessories' to the bottom.
+        # We also push products with product_type 'Accessories' to the bottom.
         sql = f"""
             SELECT
                 product_id,
@@ -71,9 +76,7 @@ def search():
                 product_type,
                 tags,
                 sku,
-                (
-                    {combined_similarity_expr}
-                ) AS combined_similarity
+                ({combined_similarity_expr}) AS combined_similarity
             FROM products
             WHERE {where_clause}
             ORDER BY
@@ -82,6 +85,7 @@ def search():
                 title
             LIMIT %s OFFSET %s;
         """
+        # Append limit and offset to parameters.
         query_params = values + [limit, offset]
         cur.execute(sql, query_params)
         rows = cur.fetchall()
@@ -97,7 +101,7 @@ def search():
         cur.execute(count_sql, values)
         total_matches = cur.fetchone()[0]
 
-        # If there are no matches, build "did you mean" suggestions.
+        # If no matches, query the dictionary table for suggestions.
         did_you_mean = []
         if total_matches == 0:
             for token in tokens:
