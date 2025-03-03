@@ -31,20 +31,11 @@ def search():
     offset = page * limit
 
     try:
-        # Build a ts_query for full-text search.
-        # By appending :* to each token, we allow prefix matching.
-        ts_query = " & ".join(token + ":*" for token in search_term.split())
-
-        # Combine columns to search. Using coalesce to avoid nulls.
-        text_expr = ("coalesce(title, '') || ' ' || "
-                     "coalesce(product_type, '') || ' ' || "
-                     "coalesce(tags, '') || ' ' || "
-                     "coalesce(sku, '')")
-
         conn = psycopg2.connect(DB_URI)
         cur = conn.cursor()
 
-        # Main query: include price and image_url in the SELECT list.
+        # Use the pg_trgm operator "%" for fuzzy substring matching.
+        # Note: In a Python f-string, we need to escape "%" as "%%".
         sql = f"""
             SELECT
                 product_id,
@@ -56,42 +47,36 @@ def search():
                 sku,
                 price,
                 image_url,
-                ts_rank(
-                    to_tsvector('english', {text_expr}),
-                    to_tsquery('english', %s)
-                ) AS rank
+                GREATEST(
+                    similarity(title, %s),
+                    similarity(product_type, %s),
+                    similarity(tags, %s),
+                    similarity(sku, %s)
+                ) AS sim_score
             FROM products
-            WHERE to_tsvector('english', {text_expr}) @@ to_tsquery('english', %s)
+            WHERE (title %% %s OR product_type %% %s OR tags %% %s OR sku %% %s)
             ORDER BY
                 CASE WHEN product_type = 'Accessories' THEN 1 ELSE 0 END,
-                rank DESC,
+                sim_score DESC,
                 title
             LIMIT %s OFFSET %s;
         """
-        query_params = [ts_query, ts_query, limit, offset]
-        cur.execute(sql, query_params)
+        # We pass the search_term four times for the similarity() calls and four times for the WHERE clause.
+        params = [search_term, search_term, search_term, search_term] + \
+                 [search_term, search_term, search_term, search_term] + \
+                 [limit, offset]
+        cur.execute(sql, params)
         rows = cur.fetchall()
         columns = [desc[0] for desc in cur.description]
-        results = []
-        for row in rows:
-            record = dict(zip(columns, row))
-            # Adjust the price: if the price is stored in cents, convert to dollars.
-            # For example, if the DB value is "112000", divide by 100 to get "1120.00".
-            price_val = record.get("price")
-            if price_val is not None:
-                try:
-                    record["price"] = "{:.2f}".format(float(price_val) / 100)
-                except Exception:
-                    pass
-            results.append(record)
+        results = [dict(zip(columns, row)) for row in rows]
 
         # Count total matches for pagination
         count_sql = f"""
             SELECT COUNT(*)
             FROM products
-            WHERE to_tsvector('english', {text_expr}) @@ to_tsquery('english', %s)
+            WHERE (title %% %s OR product_type %% %s OR tags %% %s OR sku %% %s);
         """
-        cur.execute(count_sql, [ts_query])
+        cur.execute(count_sql, [search_term]*4)
         total_matches = cur.fetchone()[0]
 
         cur.close()
