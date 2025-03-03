@@ -10,7 +10,7 @@ DB_URI = os.environ.get("DB_URI")
 
 @app.route("/api/search", methods=["GET"])
 def search():
-    # Get query parameters
+    # Get parameters
     search_term = request.args.get("q", "").strip()
     page_str = request.args.get("page", "0")
     limit_str = request.args.get("limit", "20")
@@ -31,11 +31,12 @@ def search():
     offset = page * limit
 
     try:
-        # Build a ts_query from the search term.
-        # For example, "iphone 16 case" becomes "iphone & 16 & case"
-        ts_query = " & ".join(search_term.split())
+        # Build a ts_query for full-text search.
+        # By appending :* to each token, we allow prefix matching.
+        # For example, "iphno" becomes "iphno:*" and "iphone case" becomes "iphno:* & case:*"
+        ts_query = " & ".join(token + ":*" for token in search_term.split())
 
-        # Combine the columns to search in one text. Using coalesce to avoid nulls.
+        # Combine columns to search. Using coalesce to avoid nulls.
         text_expr = ("coalesce(title, '') || ' ' || "
                      "coalesce(product_type, '') || ' ' || "
                      "coalesce(tags, '') || ' ' || "
@@ -44,7 +45,7 @@ def search():
         conn = psycopg2.connect(DB_URI)
         cur = conn.cursor()
 
-        # Main query: Use to_tsvector on the combined columns and filter with @@ to_tsquery.
+        # Main query: search using to_tsquery with prefix matching.
         sql = f"""
             SELECT
                 product_id,
