@@ -1,5 +1,7 @@
 import os
+import re
 import psycopg2
+from psycopg2.extensions import AsIs
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
@@ -30,29 +32,35 @@ def search():
 
     offset = page * limit
 
-    # Prepare data for the query
-    # 1) Full-match wildcard for the "full_match" CASE check
-    full_wildcard = f"%{search_term}%"
-
-    # 2) Construct a tsquery string for prefix matches: each token as "token:*"
-    tokens = search_term.split()
-    # Safely build an AND-based to_tsquery expression
-    # Example: searching "red shoes" => "red:* & shoes:*"
-    ts_query = " & ".join(f"{token}:*" for token in tokens)
-
-    # In case you want to handle special characters or sanitization:
-    #   from psycopg2.extensions import AsIs
-    #   Or parse tokens carefully. For now, we trust simple splits.
-
     try:
         conn = psycopg2.connect(DB_URI)
         cur = conn.cursor()
 
-        # Main query:
-        #   - Use to_tsvector(...) @@ to_tsquery(...) for fast matching
-        #   - Keep the "Accessories to bottom" rule
-        #   - Keep a "full_match" check if title ILIKE the entire search
-        sql = f"""
+        # ------------------------------------------------------------------
+        # Normalize the user's query:
+        # 1) Lowercase + remove accents (PostgreSQL's unaccent is done inside the DB).
+        # 2) Insert a space between letters and digits for consistency
+        # ------------------------------------------------------------------
+        normalized_query = search_term.lower()
+        normalized_query = re.sub(r'([a-z])([0-9])', r'\1 \2', normalized_query)
+        # e.g. "watch7" -> "watch 7", "iphone14" -> "iphone 14"
+
+        # Split tokens for prefix searching:
+        # "samsung watch 7" => ["samsung", "watch", "7"] => "samsung:* & watch:* & 7:*"
+        tokens = normalized_query.split()
+        if not tokens:
+            return jsonify({"results": [], "page": page, "limit": limit, "total": 0}), 200
+        
+        ts_query = " & ".join(f"{token}:*" for token in tokens)
+
+        # We also keep a "full_match" check. If you want the "full_match" to handle
+        # the letter-digit separation, we can do something similar in the CASE expression.
+        # For simplicity, we'll do a simpler approach: full_match checks the original
+        # title ILIKE '%search_term%', or you can also choose to check the normalized one.
+        full_wildcard = f"%{search_term}%"
+
+        # Main query
+        sql = """
             SELECT
                 product_id,
                 title,
@@ -65,36 +73,25 @@ def search():
                 image_url,
                 CASE WHEN title ILIKE %s THEN 1 ELSE 0 END AS full_match
             FROM products
-            WHERE to_tsvector(
-                    'english',
-                    COALESCE(title, '') || ' ' ||
-                    COALESCE(product_type, '') || ' ' ||
-                    COALESCE(tags, '') || ' ' ||
-                    COALESCE(sku, '')
-                  ) @@ to_tsquery('english', %s)
+            WHERE
+                -- Use the stored tsvector column for super-fast lookups
+                search_document @@ to_tsquery('english', %s)
             ORDER BY
                 full_match DESC,
                 CASE WHEN product_type = 'Accessories' THEN 1 ELSE 0 END,
                 title
-            LIMIT %s OFFSET %s
+            LIMIT %s OFFSET %s;
         """
-
         cur.execute(sql, [full_wildcard, ts_query, limit, offset])
         rows = cur.fetchall()
         columns = [desc[0] for desc in cur.description]
         results = [dict(zip(columns, row)) for row in rows]
 
         # Count total matches
-        count_sql = f"""
+        count_sql = """
             SELECT COUNT(*)
             FROM products
-            WHERE to_tsvector(
-                    'english',
-                    COALESCE(title, '') || ' ' ||
-                    COALESCE(product_type, '') || ' ' ||
-                    COALESCE(tags, '') || ' ' ||
-                    COALESCE(sku, '')
-                  ) @@ to_tsquery('english', %s)
+            WHERE search_document @@ to_tsquery('english', %s)
         """
         cur.execute(count_sql, [ts_query])
         total_matches = cur.fetchone()[0]
