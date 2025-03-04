@@ -30,41 +30,28 @@ def search():
 
     offset = page * limit
 
+    # Prepare data for the query
+    # 1) Full-match wildcard for the "full_match" CASE check
+    full_wildcard = f"%{search_term}%"
+
+    # 2) Construct a tsquery string for prefix matches: each token as "token:*"
+    tokens = search_term.split()
+    # Safely build an AND-based to_tsquery expression
+    # Example: searching "red shoes" => "red:* & shoes:*"
+    ts_query = " & ".join(f"{token}:*" for token in tokens)
+
+    # In case you want to handle special characters or sanitization:
+    #   from psycopg2.extensions import AsIs
+    #   Or parse tokens carefully. For now, we trust simple splits.
+
     try:
-        # Prepare the full wildcard search term for full_match computation.
-        full_wildcard = f"%{search_term}%"
-        
-        # Tokenize search_term and build conditions with ILIKE wildcards.
-        # For each token, we check the original title and a normalized version using regexp_replace.
-        tokens = search_term.split()
-        conditions = []
-        values = []
-        for token in tokens:
-            wildcard = f"%{token}%"
-            # For each token, check:
-            #   - original title ILIKE wildcard
-            #   - normalized title (inserting a space between letters and digits) ILIKE wildcard
-            #   - product_type, tags, and sku ILIKE wildcard
-            conditions.append("""
-                (title ILIKE %s OR 
-                 regexp_replace(title, '([A-Za-z])([0-9])', '\\1 \\2', 'g') ILIKE %s OR
-                 product_type ILIKE %s OR 
-                 tags ILIKE %s OR 
-                 sku ILIKE %s)
-            """)
-            # Add 5 parameters per token.
-            values.extend([wildcard, wildcard, wildcard, wildcard, wildcard])
-        
-        # Combine token conditions so that every token must match in some field.
-        where_clause = " AND ".join(conditions)
-        
         conn = psycopg2.connect(DB_URI)
         cur = conn.cursor()
 
         # Main query:
-        # 1. Compute "full_match": 1 if title ILIKE the full search term, else 0.
-        # 2. Apply token-based conditions (which now include normalized title check).
-        # 3. Order by full_match DESC, then push Accessories to the bottom, then by title.
+        #   - Use to_tsvector(...) @@ to_tsquery(...) for fast matching
+        #   - Keep the "Accessories to bottom" rule
+        #   - Keep a "full_match" check if title ILIKE the entire search
         sql = f"""
             SELECT
                 product_id,
@@ -78,27 +65,38 @@ def search():
                 image_url,
                 CASE WHEN title ILIKE %s THEN 1 ELSE 0 END AS full_match
             FROM products
-            WHERE {where_clause}
+            WHERE to_tsvector(
+                    'english',
+                    COALESCE(title, '') || ' ' ||
+                    COALESCE(product_type, '') || ' ' ||
+                    COALESCE(tags, '') || ' ' ||
+                    COALESCE(sku, '')
+                  ) @@ to_tsquery('english', %s)
             ORDER BY
                 full_match DESC,
                 CASE WHEN product_type = 'Accessories' THEN 1 ELSE 0 END,
                 title
-            LIMIT %s OFFSET %s;
+            LIMIT %s OFFSET %s
         """
-        # Build parameters: first parameter for full_match, then all token conditions, then limit and offset.
-        query_params = [full_wildcard] + values + [limit, offset]
-        cur.execute(sql, query_params)
+
+        cur.execute(sql, [full_wildcard, ts_query, limit, offset])
         rows = cur.fetchall()
         columns = [desc[0] for desc in cur.description]
         results = [dict(zip(columns, row)) for row in rows]
 
-        # Count total matches (using token conditions only)
+        # Count total matches
         count_sql = f"""
             SELECT COUNT(*)
             FROM products
-            WHERE {where_clause}
+            WHERE to_tsvector(
+                    'english',
+                    COALESCE(title, '') || ' ' ||
+                    COALESCE(product_type, '') || ' ' ||
+                    COALESCE(tags, '') || ' ' ||
+                    COALESCE(sku, '')
+                  ) @@ to_tsquery('english', %s)
         """
-        cur.execute(count_sql, values)
+        cur.execute(count_sql, [ts_query])
         total_matches = cur.fetchone()[0]
 
         cur.close()
