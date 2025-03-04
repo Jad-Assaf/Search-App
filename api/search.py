@@ -32,26 +32,25 @@ def search():
     offset = page * limit
 
     try:
-        # 1) Normalize the user's search input for "watch7" => "watch 7"
+        # 1) Normalize user input, e.g., "watch7" -> "watch 7"
         normalized_query = search_term.lower()
         normalized_query = re.sub(r'([a-z])([0-9])', r'\1 \2', normalized_query)
 
-        # 2) Build a ts_query for prefix matches ("samsung:* & watch:* & 7:*")
+        # 2) Build a prefix-style ts_query for partial word matches
         tokens = normalized_query.split()
         if not tokens:
-            # If nothing remains, return empty result
             return jsonify({"results": [], "page": page, "limit": limit, "total": 0}), 200
         ts_query = " & ".join(f"{token}:*" for token in tokens)
 
-        # 3) For the "full_match" check, keep it simpler: if the original title
-        #    ILIKE the raw search_term (no digit-letter splitting).
+        # 3) For the "full_match" check, we can do a simple ILIKE
         full_wildcard = f"%{search_term}%"
-        
+
         conn = psycopg2.connect(DB_URI)
         cur = conn.cursor()
 
-        # 4) Search query using the stored column "search_document":
-        sql = """
+        # 4) Use the SAME expression from the functional index in WHERE,
+        #    so it can utilize the GIN index for speed.
+        search_sql = """
             SELECT
                 product_id,
                 title,
@@ -64,23 +63,50 @@ def search():
                 image_url,
                 CASE WHEN title ILIKE %s THEN 1 ELSE 0 END AS full_match
             FROM products
-            WHERE search_document @@ to_tsquery('english', %s)
+            WHERE to_tsvector(
+                    'english',
+                    regexp_replace(
+                        lower(
+                            coalesce(title, '') || ' ' ||
+                            coalesce(product_type, '') || ' ' ||
+                            coalesce(tags, '') || ' ' ||
+                            coalesce(sku, '')
+                        ),
+                        '([a-z])([0-9])',
+                        '\\1 \\2',
+                        'g'
+                    )
+                  ) @@ to_tsquery('english', %s)
             ORDER BY
                 full_match DESC,
                 CASE WHEN product_type = 'Accessories' THEN 1 ELSE 0 END,
                 title
             LIMIT %s OFFSET %s
         """
-        cur.execute(sql, [full_wildcard, ts_query, limit, offset])
+
+        cur.execute(search_sql, [full_wildcard, ts_query, limit, offset])
         rows = cur.fetchall()
         columns = [desc[0] for desc in cur.description]
         results = [dict(zip(columns, row)) for row in rows]
 
-        # 5) Count total matches
+        # Count total matches with the same expression
         count_sql = """
             SELECT COUNT(*)
             FROM products
-            WHERE search_document @@ to_tsquery('english', %s)
+            WHERE to_tsvector(
+                    'english',
+                    regexp_replace(
+                        lower(
+                            coalesce(title, '') || ' ' ||
+                            coalesce(product_type, '') || ' ' ||
+                            coalesce(tags, '') || ' ' ||
+                            coalesce(sku, '')
+                        ),
+                        '([a-z])([0-9])',
+                        '\\1 \\2',
+                        'g'
+                    )
+                  ) @@ to_tsquery('english', %s)
         """
         cur.execute(count_sql, [ts_query])
         total_matches = cur.fetchone()[0]
