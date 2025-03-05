@@ -53,7 +53,6 @@ def search():
         cur = conn.cursor()
 
         # Combined query: fetch results and total count using COUNT(*) OVER()
-        # Prioritize results whose title includes "Apple" or "Samsung"
         search_sql = """
             SELECT
                 product_id,
@@ -84,7 +83,6 @@ def search():
                   ) @@ to_tsquery('english', %s)
             ORDER BY
                 full_match DESC,
-                CASE WHEN title ILIKE '%apple%' OR title ILIKE '%samsung%' THEN 1 ELSE 0 END DESC,
                 CASE WHEN product_type = 'Accessories' THEN 1 ELSE 0 END,
                 title
             LIMIT %s OFFSET %s
