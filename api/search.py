@@ -11,13 +11,13 @@ CORS(app)
 DB_URI = os.environ.get("DB_URI")
 
 # Set up a connection pool (min 1, max 20 connections)
-db_pool = pool.SimpleConnectionPool(1, 3, DB_URI)
+db_pool = pool.SimpleConnectionPool(1, 1, DB_URI)
 
 @app.route("/api/search", methods=["GET"])
 def search():
     search_term = request.args.get("q", "").strip()
     page_str = request.args.get("page", "0")
-    limit_str = request.args.get("limit", "3")
+    limit_str = request.args.get("limit", "1")
 
     try:
         page = int(page_str)
@@ -25,9 +25,9 @@ def search():
         if page < 0:
             page = 0
         if limit < 1:
-            limit = 20
+            limit = 1
     except ValueError:
-        page, limit = 0, 20
+        page, limit = 0, 1
 
     if not search_term:
         return jsonify({"error": "Missing 'q' query parameter."}), 400
