@@ -11,7 +11,7 @@ CORS(app)
 DB_URI = os.environ.get("DB_URI")
 
 # Set up a connection pool (min 1, max 20 connections)
-db_pool = pool.SimpleConnectionPool(1, 20, DB_URI)
+db_pool = pool.SimpleConnectionPool(1, 5, DB_URI)
 
 @app.route("/api/search", methods=["GET"])
 def search():
