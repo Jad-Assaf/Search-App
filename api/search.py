@@ -17,7 +17,7 @@ db_pool = pool.SimpleConnectionPool(1, 5, DB_URI)
 def search():
     search_term = request.args.get("q", "").strip()
     page_str = request.args.get("page", "0")
-    limit_str = request.args.get("limit", "20")
+    limit_str = request.args.get("limit", "5")
 
     try:
         page = int(page_str)
