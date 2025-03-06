@@ -11,13 +11,13 @@ CORS(app)
 DB_URI = os.environ.get("DB_URI")
 
 # Set up a connection pool (min 1, max 20 connections)
-db_pool = pool.SimpleConnectionPool(1, 5, DB_URI)
+db_pool = pool.SimpleConnectionPool(1, 3, DB_URI)
 
 @app.route("/api/search", methods=["GET"])
 def search():
     search_term = request.args.get("q", "").strip()
     page_str = request.args.get("page", "0")
-    limit_str = request.args.get("limit", "5")
+    limit_str = request.args.get("limit", "3")
 
     try:
         page = int(page_str)
